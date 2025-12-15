@@ -10,6 +10,7 @@ use BlackCat\Database\Packages\DeviceCodes\Dto\DeviceCodeDto as Dto;
 use BlackCat\Database\Packages\DeviceCodes\Mapper\DeviceCodeDtoMapper as RowMapper;
 use BlackCat\Database\Contracts\ContractRepository as RepoContract;
 use BlackCat\Database\Contracts\KeysetRepository as KeysetRepoContract;
+use BlackCat\Database\Packages\DeviceCodes\Repository\DeviceCodeRepositoryInterface;
 use BlackCat\Database\Support\OrderByTools;
 use BlackCat\Database\Support\SqlIdentifier as Ident;
 use BlackCat\Database\Support\PkTools;
@@ -23,12 +24,12 @@ class DeviceCodeRepository implements DeviceCodeRepositoryInterface, RepoContrac
 use OrderByTools, PkTools, RepositoryHelpers;
 
     /** @var mixed literal token for upsert keys (array or empty). */
-    private mixed $tokenUpsertKeys = [];
+    private mixed $tokenUpsertKeys = [ 'device_code_hash' ];
 
     public function __construct(private readonly Database $db) {}
 
     /**
-     * Optionally override the Definitions FQN â€“ trait otherwise infers it from the repository FQN.
+     * Optionally override the Definitions FQN - trait otherwise infers it from the repository FQN.
      */
     protected function def(): string { return \BlackCat\Database\Packages\DeviceCodes\Definitions::class; }
 
@@ -121,7 +122,7 @@ use OrderByTools, PkTools, RepositoryHelpers;
         }
         $soft = Definitions::softDeleteColumn();
         if ($soft) {
-            // CLEAR: deleted_at = NULL on conflict.
+            // CLEAR: deleted_at = NULL on conflict
             $row[$soft] = null;
             if (!in_array($soft, $updateCols, true)) {
                 $updateCols[] = $soft;
@@ -130,7 +131,7 @@ use OrderByTools, PkTools, RepositoryHelpers;
         return [$row, $updateCols];
     }
 
-    /** Upsert row – default behavior preserves soft-delete (no revive). */
+    /** Standard upsert - preserves soft-delete (no revive). */
     public function upsert(#[\SensitiveParameter] array $row): void
     {
         $this->doUpsert($row, false);
@@ -150,7 +151,6 @@ use OrderByTools, PkTools, RepositoryHelpers;
 
         $keys = $this->resolveUpsertKeys();
 
-        // Generated from schema-map: device_codes upsert should update approval/token fields on conflict.
         $updCols = [ 'token_payload', 'token_payload_key_version', 'approved_at' ];
         $updCols = array_values(array_diff($updCols, array_merge($this->pkColumns(Definitions::class), $keys)));
 
@@ -168,7 +168,7 @@ use OrderByTools, PkTools, RepositoryHelpers;
         $this->db->execute($sql, $params);
     }
 
-    /** Upsert by keys – default behavior keeps soft-delete. */
+    /** Upsert by keys - default behavior keeps soft-delete. */
     public function upsertByKeys(array $row, array $keys, array $updateColumns = []): void
     {
         $this->doUpsertByKeys($row, $keys, $updateColumns, false);
@@ -222,7 +222,7 @@ use OrderByTools, PkTools, RepositoryHelpers;
         $helperKeys = $this->resolveUpsertKeys();
         if ($helperKeys && class_exists(\BlackCat\Database\Support\BulkUpsertHelper::class)) {
           $bulk = new \BlackCat\Database\Support\BulkUpsertHelper($this->db, \BlackCat\Database\Packages\DeviceCodes\Definitions::class);
-          $bulk->upsertMany($rows, $helperKeys, []);
+          $bulk->upsertMany($rows, $helperKeys, [ 'token_payload', 'token_payload_key_version', 'approved_at' ]);
           return count($rows);
         }
 
@@ -252,7 +252,7 @@ use OrderByTools, PkTools, RepositoryHelpers;
           ));
           if (!$rows) { return 0; }
 
-          $updCols = [];
+          $updCols = [ 'token_payload', 'token_payload_key_version', 'approved_at' ];
           if ($updCols && $soft && !in_array($soft, $updCols, true)) { $updCols[] = $soft; }
 
           $bulk = new \BlackCat\Database\Support\BulkUpsertHelper($this->db, \BlackCat\Database\Packages\DeviceCodes\Definitions::class);
@@ -267,19 +267,124 @@ use OrderByTools, PkTools, RepositoryHelpers;
 
     // --- UPDATE / DELETE / RESTORE ------------------------------------------
 
-    public function updateById(int|string|array $id, array $row): int {
-        return $this->updateByIdWhere($id, $row, []);
+    public function updateByIdWhere(int|string|array $id, #[\SensitiveParameter] array $row, array $where): int
+    {
+        if ($where === []) {
+            return $this->updateById($id, $row);
+        }
+
+        $row = $this->normalizeInputRow($row);
+
+        $tbl   = Ident::qi($this->db, Definitions::table());
+        $pkCols= $this->pkColumns(Definitions::class);
+        $idMap = $this->normalizePkInput($id, $pkCols);
+
+        $verCol = Definitions::versionColumn();
+        $updAt  = Definitions::updatedAtColumn();
+
+        $hasExpectedVersion = $verCol && array_key_exists($verCol, $row);
+        $expectedVersion = $hasExpectedVersion ? $row[$verCol] : null;
+        if ($hasExpectedVersion) unset($row[$verCol]);
+
+        $row = $this->filterCols($row);
+
+        $params  = [];
+        $whereSql = $this->buildPkWhere('', $idMap, $params, 'pk_');
+
+        foreach ($where as $col => $val) {
+            $ph = 'w_' . $col;
+            $whereSql .= ' AND ' . Ident::q($this->db, (string)$col) . ' = :' . $ph;
+            $params[$ph] = $val;
+        }
+
+        $pkSet   = array_fill_keys($pkCols, true);
+        $assign  = [];
+
+        foreach ($row as $k => $v) {
+            if (isset($pkSet[$k])) continue;
+            $assign[]     = Ident::q($this->db, $k) . ' = :' . $k;
+            $params[$k]   = $v;
+        }
+
+        if ($verCol && $this->isNumericVersion()) {
+            $assign[] = Ident::q($this->db, $verCol) . ' = ' . Ident::q($this->db, $verCol) . ' + 1';
+        }
+        if ($updAt && !array_key_exists($updAt, $row)) {
+            $assign[] = Ident::q($this->db, $updAt) . ' = CURRENT_TIMESTAMP';
+        }
+
+        if (!$assign) return 0;
+
+        $sql = "UPDATE {$tbl} SET " . implode(', ', $assign) . " WHERE {$whereSql}";
+        if ($verCol && $hasExpectedVersion) {
+            $sql .= ' AND ' . Ident::q($this->db, $verCol) . ' = :expected_version';
+            $params['expected_version'] = is_numeric($expectedVersion) ? (int)$expectedVersion : $expectedVersion;
+        }
+
+        return $this->db->execute($sql, $params);
+    }
+
+    public function updateById(int|string|array $id, #[\SensitiveParameter] array $row): int {
+        $row = $this->normalizeInputRow($row);
+
+        $tbl   = Ident::qi($this->db, Definitions::table());
+        $pkCols= $this->pkColumns(Definitions::class);
+        $idMap = $this->normalizePkInput($id, $pkCols);
+
+        $verCol = Definitions::versionColumn();
+        $updAt  = Definitions::updatedAtColumn();
+
+        $hasExpectedVersion = $verCol && array_key_exists($verCol, $row);
+        $expectedVersion = $hasExpectedVersion ? $row[$verCol] : null;
+        if ($hasExpectedVersion) unset($row[$verCol]);
+
+        $row = $this->filterCols($row);
+
+        $params  = [];
+        $wherePk = $this->buildPkWhere('', $idMap, $params, 'pk_');
+
+        $pkSet   = array_fill_keys($pkCols, true);
+        $assign  = [];
+
+        // payload columns (excluding PK)
+        foreach ($row as $k => $v) {
+            if (isset($pkSet[$k])) continue;
+            $assign[]     = Ident::q($this->db, $k) . ' = :' . $k;
+            $params[$k]   = $v;
+        }
+
+        // touch - version/updated_at
+        if ($verCol && $this->isNumericVersion()) {
+            $assign[] = Ident::q($this->db, $verCol) . ' = ' . Ident::q($this->db, $verCol) . ' + 1';
+        }
+        if ($updAt && !array_key_exists($updAt, $row)) {
+            $assign[] = Ident::q($this->db, $updAt) . ' = CURRENT_TIMESTAMP';
+        }
+
+        if (!$assign) return 0;
+
+        $sql = "UPDATE {$tbl} SET " . implode(', ', $assign) . " WHERE {$wherePk}";
+        if ($verCol && $hasExpectedVersion) {
+            $sql .= ' AND ' . Ident::q($this->db, $verCol) . ' = :expected_version';
+            $params['expected_version'] = is_numeric($expectedVersion) ? (int)$expectedVersion : $expectedVersion;
+        }
+
+        return $this->db->execute($sql, $params);
     }
 
     public function deleteById(int|string|array $id): int {
         $tbl = Ident::qi($this->db, Definitions::table());
-        $pkCols = $this->pkColumns(Definitions::class);
-        $idMap  = $this->normalizePkInput($id, $pkCols);
-        $params=[]; $where = $this->buildPkWhere('', $idMap, $params, 'pk_');
-        $guard = $this->softGuard('');
-        $sql = "DELETE FROM {$tbl} WHERE {$where}";
-        if ($guard !== '1=1') $sql .= ' AND ' . $guard;
-        return $this->db->execute($sql, $params);
+        $pk  = $this->normalizePkInput($id, $this->pkColumns(Definitions::class));
+        $params=[]; $wherePk = $this->buildPkWhere('', $pk, $params, 'pk_');
+
+        if ($soft = Definitions::softDeleteColumn()) {
+            $set = Ident::q($this->db, $soft) . ' = CURRENT_TIMESTAMP';
+            if (($updAt = Definitions::updatedAtColumn()) && $updAt !== $soft) {
+                $set .= ', ' . Ident::q($this->db, $updAt) . ' = CURRENT_TIMESTAMP';
+            }
+            return $this->db->execute("UPDATE {$tbl} SET {$set} WHERE {$wherePk}", $params);
+        }
+        return $this->db->execute("DELETE FROM {$tbl} WHERE {$wherePk}", $params);
     }
 
     public function restoreById(int|string|array $id): int {
@@ -522,7 +627,6 @@ use OrderByTools, PkTools, RepositoryHelpers;
         if (!is_array($row)) { return null; }
         return $row['id'] ?? null;
     }
-
     /** @return array<string,mixed>|\BlackCat\Database\Packages\DeviceCodes\Dto\DeviceCodeDto|null */
     public function getByUserCodeHash(string $userCodeHash, bool $asDto = false): array|\BlackCat\Database\Packages\DeviceCodes\Dto\DeviceCodeDto|null {
         return $this->getByUnique([ 'user_code_hash' => $userCodeHash ], $asDto);

@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace BlackCat\Database\Packages\DeviceCodes\Repository;
 
+use BlackCat\Database\Packages\DeviceCodes\Criteria;
 use BlackCat\Database\Contracts\ContractRepository as RepoContract;
 use BlackCat\Database\Contracts\KeysetRepository as KeysetRepoContract;
 use BlackCat\Database\Packages\DeviceCodes\Dto\DeviceCodeDto as Dto;
@@ -50,4 +51,3 @@ interface DeviceCodeRepositoryInterface extends RepoContract, KeysetRepoContract
     public function paginateBySeek(object $criteria, array $order, ?array $cursor, int $limit): array;
     public function lockById(int|string|array $id, string $mode = 'wait', string $strength = 'update'): ?array;
 }
-

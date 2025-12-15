@@ -1,4 +1,4 @@
--- Auto-generated from schema-map-postgres.yaml
+-- Auto-generated from schema-map-postgres.yaml (map@sha1:FAEA49A5D5F8FAAD9F850D0F430ED451C5C1D707)
 -- engine: postgres
 -- table:  device_codes
 
@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS device_codes (
   approved_at TIMESTAMPTZ(6) NULL,
   expires_at TIMESTAMPTZ(6) NOT NULL,
   created_at TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-  CONSTRAINT uq_device_codes_device_code_hash UNIQUE (device_code_hash),
-  CONSTRAINT uq_device_codes_user_code_hash UNIQUE (user_code_hash),
+  CONSTRAINT ux_device_codes_device_code_hash UNIQUE (device_code_hash),
+  CONSTRAINT ux_device_codes_user_code_hash UNIQUE (user_code_hash),
   CONSTRAINT chk_device_codes_interval CHECK (interval_sec >= 0)
 );
