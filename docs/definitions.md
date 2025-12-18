@@ -3,23 +3,23 @@
 OAuth device-code flow storage (issued codes + approval payload).
 
 ## Columns
-| Column | Type | Null | Default | Description |
-| --- | --- | --- | --- | --- |
-| id | BIGINT | NO |  | Surrogate primary key. |
-| device_code_hash | mysql: BINARY(32) / postgres: BYTEA | NO |  | Deterministic hash of device_code (HMAC; used for polling lookup). |
-| device_code_hash_key_version | VARCHAR(64) | YES |  | Key version used for device_code_hash. |
-| device_code | mysql: BLOB / postgres: BYTEA | NO |  | Encrypted device_code (envelope). |
-| device_code_key_version | VARCHAR(64) | YES |  | Key version used for device_code encryption. |
-| user_code_hash | mysql: BINARY(32) / postgres: BYTEA | NO |  | Deterministic hash of user_code (HMAC; used for activation lookup). |
-| user_code_hash_key_version | VARCHAR(64) | YES |  | Key version used for user_code_hash. |
-| client_id | VARCHAR(128) | NO |  | OAuth client id requesting the device code. |
-| scopes | mysql: JSON / postgres: JSONB | NO | []'::jsonb | Requested scopes (JSON array). |
-| token_payload | mysql: BLOB / postgres: BYTEA | YES |  | Encrypted token payload issued after approval (envelope JSON). |
-| token_payload_key_version | VARCHAR(64) | YES |  | Key version used for token_payload encryption. |
-| interval_sec | mysql: INT / postgres: INTEGER | NO | 5 | Recommended polling interval in seconds. |
-| approved_at | mysql: DATETIME(6) / postgres: TIMESTAMPTZ(6) | YES |  | When the device code was approved by the user (UTC). |
-| expires_at | mysql: DATETIME(6) / postgres: TIMESTAMPTZ(6) | NO |  | Expiration timestamp (UTC). |
-| created_at | mysql: DATETIME(6) / postgres: TIMESTAMPTZ(6) | NO | CURRENT_TIMESTAMP(6) | Creation timestamp (UTC). |
+| Column | Type | Null | Default | Description | Crypto |
+| --- | --- | --- | --- | --- | --- |
+| id | BIGINT | NO |  | Surrogate primary key. |  |
+| device_code_hash | mysql: BINARY(32) / postgres: BYTEA | NO |  | Deterministic hash of device_code (HMAC; used for polling lookup). | `hmac`<br/>ctx: `db.hmac.device_codes.device_code_hash`<br/>kv: `device_code_hash_key_version` |
+| device_code_hash_key_version | VARCHAR(64) | YES |  | Key version used for device_code_hash. | key version for: `device_code_hash` |
+| device_code | mysql: BLOB / postgres: BYTEA | NO |  | Encrypted device_code (envelope). |  |
+| device_code_key_version | VARCHAR(64) | YES |  | Key version used for device_code encryption. |  |
+| user_code_hash | mysql: BINARY(32) / postgres: BYTEA | NO |  | Deterministic hash of user_code (HMAC; used for activation lookup). | `hmac`<br/>ctx: `db.hmac.device_codes.user_code_hash`<br/>kv: `user_code_hash_key_version` |
+| user_code_hash_key_version | VARCHAR(64) | YES |  | Key version used for user_code_hash. | key version for: `user_code_hash` |
+| client_id | VARCHAR(128) | NO |  | OAuth client id requesting the device code. |  |
+| scopes | mysql: JSON / postgres: JSONB | NO | postgres: []'::jsonb | Requested scopes (JSON array). |  |
+| token_payload | mysql: BLOB / postgres: BYTEA | YES |  | Encrypted token payload issued after approval (envelope JSON). |  |
+| token_payload_key_version | VARCHAR(64) | YES |  | Key version used for token_payload encryption. |  |
+| interval_sec | mysql: INT / postgres: INTEGER | NO | 5 | Recommended polling interval in seconds. |  |
+| approved_at | mysql: DATETIME(6) / postgres: TIMESTAMPTZ(6) | YES |  | When the device code was approved by the user (UTC). |  |
+| expires_at | mysql: DATETIME(6) / postgres: TIMESTAMPTZ(6) | NO |  | Expiration timestamp (UTC). |  |
+| created_at | mysql: DATETIME(6) / postgres: TIMESTAMPTZ(6) | NO | CURRENT_TIMESTAMP(6) | Creation timestamp (UTC). |  |
 
 ## Engine Details
 
