@@ -9,27 +9,15 @@ use DateTimeZone;
 use BlackCat\Database\Support\DtoHydrator;
 
 /**
- * Bidirectional mapper between DB rows and DTO DeviceCodeDto.
+ * Bidirectional mapper between DB rows and DTO DeviceCodeDto:
+ * - Casting/JSON/binary/datetime handled by the universal DtoHydrator
+ * - Column -> property mapping is driven by COL_TO_PROP (populated by the generator)
+ * - Tolerant to missing columns (keeps null)
  */
 final class DeviceCodeDtoMapper
 {
     /** @var array<string,string> Column -> DTO property */
-    private const COL_TO_PROP = [
-        'id' => 'id',
-        'device_code_hash' => 'deviceCodeHash',
-        'device_code_hash_key_version' => 'deviceCodeHashKeyVersion',
-        'device_code_key_version' => 'deviceCodeKeyVersion',
-        'user_code_hash' => 'userCodeHash',
-        'user_code_hash_key_version' => 'userCodeHashKeyVersion',
-        'client_id' => 'clientId',
-        'scopes' => 'scopes',
-        'token_payload' => 'tokenPayload',
-        'token_payload_key_version' => 'tokenPayloadKeyVersion',
-        'interval_sec' => 'intervalSec',
-        'approved_at' => 'approvedAt',
-        'expires_at' => 'expiresAt',
-        'created_at' => 'createdAt',
-    ];
+    private const COL_TO_PROP = [ 'id' => 'id', 'device_code_hash' => 'deviceCodeHash', 'device_code_hash_key_version' => 'deviceCodeHashKeyVersion', 'device_code' => 'deviceCode', 'device_code_key_version' => 'deviceCodeKeyVersion', 'user_code_hash' => 'userCodeHash', 'user_code_hash_key_version' => 'userCodeHashKeyVersion', 'client_id' => 'clientId', 'scopes' => 'scopes', 'token_payload' => 'tokenPayload', 'token_payload_key_version' => 'tokenPayloadKeyVersion', 'interval_sec' => 'intervalSec', 'approved_at' => 'approvedAt', 'expires_at' => 'expiresAt', 'created_at' => 'createdAt' ];
 
     /** @var string[] */
     private const BOOL_COLS   = [];
@@ -42,7 +30,7 @@ final class DeviceCodeDtoMapper
     /** @var string[] */
     private const DATE_COLS   = [ 'approved_at', 'expires_at', 'created_at' ];
     /** @var string[] */
-    private const BIN_COLS    = [ 'device_code_hash', 'user_code_hash', 'token_payload' ];
+    private const BIN_COLS    = [ 'device_code_hash', 'device_code', 'user_code_hash', 'token_payload' ];
 
     /** Preferred timezone for parsing/serializing dates */
     private const TZ = 'UTC';
@@ -58,7 +46,10 @@ final class DeviceCodeDtoMapper
     }
 
     /**
+     * Hydrate a DTO from a DB row (associative array).
+     *
      * @param array<string,mixed> $row
+     * @return DeviceCodeDto
      */
     public static function fromRow(array $row): DeviceCodeDto
     {
@@ -83,8 +74,11 @@ final class DeviceCodeDtoMapper
     }
 
     /**
-     * @param DeviceCodeDto $dto
-     * @param string[]|null $onlyProps
+     * Serialize a DTO back into a DB row (for insert/update).
+     * - JSON -> string, DATETIME -> 'Y-m-d H:i:s.u', BOOL -> 0/1, BINARY -> raw bytes
+     *
+     * @param DeviceCodeDto   $dto
+     * @param string[]|null   $onlyProps  optional whitelist of DTO properties to serialize
      * @return array<string,mixed>
      */
     public static function toRow(DeviceCodeDto $dto, ?array $onlyProps = null): array
@@ -103,6 +97,7 @@ final class DeviceCodeDtoMapper
         );
     }
 
+    /** Same as toRow(), but removes keys with null values (does not overwrite DB values with NULL). */
     public static function toRowNonNull(DeviceCodeDto $dto, ?array $onlyProps = null): array
     {
         $row = self::toRow($dto, $onlyProps);
@@ -113,8 +108,12 @@ final class DeviceCodeDtoMapper
     }
 
     /**
+     * Compute changed columns relative to the original row (assoc array from DB).
+     * Returns only differing pairs col => newValue.
+     *
      * @param array<string,mixed> $original
-     * @param string[] $ignore
+     * @param string[] $ignore   Columns to skip during comparison (e.g., updated_at)
+     * @param bool $coerce       Normalize scalars (0 vs '0', true vs 1) before comparing
      * @return array<string,mixed>
      */
     public static function diff(DeviceCodeDto $dto, array $original, array $ignore = [], bool $coerce = true): array
@@ -134,7 +133,7 @@ final class DeviceCodeDtoMapper
                 $vn = is_bool($v) ? (int)$v : (string)$v;
                 $on = is_bool($orig) ? (int)$orig : (string)$orig;
                 if ($vn === $on) continue;
-            } elseif ($v == $orig) {
+            } elseif ($v == $orig) { // looser comparison for nested structures
                 continue;
             }
 
@@ -144,6 +143,8 @@ final class DeviceCodeDtoMapper
     }
 
     /**
+     * Batch hydration: array of rows -> array of DTOs.
+     *
      * @param array<int,array<string,mixed>> $rows
      * @return array<int,DeviceCodeDto>
      */
@@ -174,11 +175,12 @@ final class DeviceCodeDtoMapper
             $decl = (array) Definitions::piiColumns();
 
             if ($decl) {
-                $map = self::COL_TO_PROP;
-                $rev = array_flip($map);
+                $map = self::COL_TO_PROP;         // col -> prop
+                $rev = array_flip($map);          // prop -> col
 
                 foreach ($decl as $name) {
                     $name = (string) $name;
+                    // accept both 'email' (column) and 'emailHash' (property)
                     $col = array_key_exists($name, $row) ? $name : ($rev[$name] ?? $name);
                     $pii[$col] = true;
                 }
@@ -198,6 +200,7 @@ final class DeviceCodeDtoMapper
     }
 
     /**
+     * Lazy hydration - generates DTOs without buffering the entire collection.
      * @param iterable<int,array<string,mixed>> $rows
      * @return \Generator<int,DeviceCodeDto>
      */
